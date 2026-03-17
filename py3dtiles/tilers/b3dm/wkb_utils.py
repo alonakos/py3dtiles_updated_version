@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import struct
 
 import mapbox_earcut as earcut
@@ -21,19 +20,28 @@ class TriangleSoup:
 
     @property
     def vertices(self) -> npt.NDArray[np.float32]:
-        """Extract the unique vertices that compose the triangle set."""
+        if hasattr(self, "_vertices"):
+            return self._vertices
         return np.unique(np.concatenate(self.triangles[0]), axis=0)
 
     @property
-    def triangle_indices(self) -> npt.NDArray[np.uint8]:
-        """Express the triangles as triplets of vertex indices."""
-        flattened_triangles = np.concatenate(self.triangles[0])
-        indices = np.full(flattened_triangles.shape[0], dtype=np.uint8, fill_value=255)
-        for vertex_idx in range(self.vertices.shape[0]):
-            indices[
-                np.all(flattened_triangles == self.vertices[vertex_idx], axis=1)
-            ] = vertex_idx
-        return indices.reshape(-1, 3)
+    def triangle_indices(self) -> npt.NDArray[np.uint32]:
+        flattened = np.concatenate(self.triangles[0])
+
+        vertex_map: dict[bytes, int] = {}
+        vertices = []
+        indices = []
+
+        for v in flattened:
+            key = v.tobytes()
+            if key not in vertex_map:
+                vertex_map[key] = len(vertices)
+                vertices.append(v)
+            indices.append(vertex_map[key])
+
+        self._vertices = np.array(vertices, dtype=np.float32)
+        return np.array(indices, dtype=np.uint32).reshape(-1, 3)
+
 
     @staticmethod
     def from_wkb_multipolygon(
@@ -72,10 +80,8 @@ class TriangleSoup:
         """
         Returns a binary array of vertex positions
         """
-
-        vertex_triangles = self.triangles[0]
-        vertex_array = vertex_attribute_to_array(vertex_triangles)
-        return b"".join([vertex.tobytes() for vertex in vertex_array])
+        vertex_array = vertex_attribute_to_array(self.triangles[0])
+        return b"".join(vertex.tobytes() for vertex in vertex_array)
 
     def get_data_array(self, index: int) -> bytes:
         """
@@ -93,8 +99,8 @@ class TriangleSoup:
         """
         Returns a binary array of vertex normals
         """
-        vertex_array = list(self.compute_normals())
-        return b"".join([vertex.tobytes() for vertex in vertex_array])
+        vertex_array = self.compute_normals()
+        return b"".join(vertex.tobytes() for vertex in vertex_array)
 
     def compute_normals(self) -> npt.NDArray[np.float32]:
         """Compute vertex normals and returns them as a numpy array."""
@@ -139,10 +145,13 @@ def parse(wkb: bytes) -> MultiPolygonsType:
     byteorder = struct.unpack("b", wkb[0:1])
     bo = "<" if byteorder[0] else ">"
     geomtype = struct.unpack(bo + "I", wkb[1:5])[0]
-    has_z = (geomtype == 1006) or (geomtype == 1015)
-    # MultipolygonZ or polyhedralSurface
+    # Should be 6 for MultiPolygon
+    # has_z = (geomtype == 1006) or (geomtype == 1015)
+    has_z = (geomtype in [1006, 2147483654]) or (geomtype == 1015)
+    # # MultipolygonZ or polyhedralSurface
     pnt_offset = 24 if has_z else 16
-    pnt_unpack = "ddd" if has_z else "dd"
+    # pnt_unpack = "ddd" if has_z else "dd"
+    pnt_unpack = bo + ('ddd' if has_z else 'dd')
     geom_nb = struct.unpack(bo + "I", wkb[5:9])[0]
     # print(struct.unpack('b', wkb[9:10])[0])
     # print(struct.unpack('I', wkb[10:14])[0])   # 1003 (Polygon)
@@ -161,7 +170,7 @@ def parse(wkb: bytes) -> MultiPolygonsType:
             line = []
             for _ in range(point_nb - 1):
                 pt = np.array(
-                    struct.unpack(bo + pnt_unpack, wkb[offset : offset + pnt_offset]),
+                    struct.unpack(pnt_unpack, wkb[offset : offset + pnt_offset]),
                     dtype=np.float32,
                 )
                 offset += pnt_offset
@@ -221,32 +230,35 @@ def triangulate(
 
     polygon_2d = []
     holes = []
-    delta = 0
-    for p in polygon:
-        holes.append(delta + len(p))
+    delta = len(polygon[0])
+    for p in polygon[1:]:
+        holes.append(delta)
         delta += len(p)
     # triangulation of the polygon projected on planes (xy) (zx) or (yz)
-    if math.fabs(vect_prod[0]) > math.fabs(vect_prod[1]) and math.fabs(
-        vect_prod[0]
-    ) > math.fabs(vect_prod[2]):
-        # (yz) projection
-        for linestring in polygon:
-            for point in linestring:
-                polygon_2d.extend([point[1], point[2]])
-    elif math.fabs(vect_prod[1]) > math.fabs(vect_prod[2]):
-        # (zx) projection
-        for linestring in polygon:
-            for point in linestring:
-                polygon_2d.extend([point[0], point[2]])
-    else:
-        # (xy) projection
-        for linestring in polygon:
-            for point in linestring:
-                polygon_2d.extend([point[0], point[1]])
+    # if math.fabs(vect_prod[0]) > math.fabs(vect_prod[1]) and math.fabs(
+    #     vect_prod[0]
+    # ) > math.fabs(vect_prod[2]):
+    #     # (yz) projection
+    #     for linestring in polygon:
+    #         for point in linestring:
+    #             polygon_2d.extend([point[1], point[2]])
+    # elif math.fabs(vect_prod[1]) > math.fabs(vect_prod[2]):
+    #     # (zx) projection
+    #     for linestring in polygon:
+    #         for point in linestring:
+    #             polygon_2d.extend([point[0], point[2]])
+    # else:
+    #     # (xy) projection
+    #     for linestring in polygon:
+    #         for point in linestring:
+    #             polygon_2d.extend([point[0], point[1]])
 
-    polygon_2d_numpy = np.array(polygon_2d).reshape(-1, 2)
-    holes_numpy = np.array(holes)
-    triangles_idx = earcut.triangulate_float32(polygon_2d_numpy, holes_numpy)
+    for linestring in polygon:
+        for point in linestring:
+            polygon_2d.extend([point[0], point[1], point[2]])
+
+    # CSJ changed for xyz points
+    triangles_idx = earcut(polygon_2d, holes, 3)
 
     arrays: list[PolygonAsTriangleType] = [
         [] for _ in range(len(additional_polygons) + 1)
@@ -261,6 +273,7 @@ def triangulate(
         # FIXME fix / change the triangulation code instead?
         cross_product = np.cross(p1 - p0, p2 - p0)
         invert = np.dot(vect_prod, cross_product) < 0
+        invert = False
         if invert:
             arrays[0].append(np.array([p1, p0, p2], dtype=np.float32))
         else:
