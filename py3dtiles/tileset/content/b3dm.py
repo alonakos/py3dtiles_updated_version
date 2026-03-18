@@ -34,23 +34,25 @@ class B3dm(LegacyTileContent):
         )
 
         # sync the tile header with feature table contents
-        self.header.tile_byte_length = len(gltf_arr) + B3dmHeader.BYTE_LENGTH
-        self.header.bt_json_byte_length = 0
-        self.header.bt_bin_byte_length = 0
+        self.header.tile_byte_length = B3dmHeader.BYTE_LENGTH + len(gltf_arr)
         self.header.ft_json_byte_length = 0
         self.header.ft_bin_byte_length = 0
+        self.header.bt_json_byte_length = 0
+        self.header.bt_bin_byte_length = 0
 
         if self.body.feature_table is not None:
-            fth_arr = self.body.feature_table.to_array()
-
-            self.header.tile_byte_length += len(fth_arr)
-            self.header.ft_json_byte_length = len(fth_arr)
+            ft_json = self.body.feature_table.header.to_array()
+            ft_bin = self.body.feature_table.body.to_array()
+            self.header.tile_byte_length += len(ft_json) + len(ft_bin)
+            self.header.ft_json_byte_length = len(ft_json)
+            self.header.ft_bin_byte_length = len(ft_bin)
 
         if self.body.batch_table is not None:
-            bth_arr = self.body.batch_table.to_array()
-
-            self.header.tile_byte_length += len(bth_arr)
-            self.header.bt_json_byte_length = len(bth_arr)
+            bt_json = self.body.batch_table.header.to_array()
+            bt_bin = self.body.batch_table.body.to_array()
+            self.header.tile_byte_length += len(bt_json) + len(bt_bin)
+            self.header.bt_json_byte_length = len(bt_json)
+            self.header.bt_bin_byte_length = len(bt_bin)
 
     @staticmethod
     def from_numpy_arrays(
