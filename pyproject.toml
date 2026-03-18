@@ -3,10 +3,10 @@ requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "py3dtiles"
+name = "pdg3dtiles"
 version = "12.1.0"
 authors = [
-    {name = "The Py3DTiles team", email = "contact@oslandia.com"},
+    {name = "The Py3DTiles and PermafrostDiscoveryGateway teams", email = "contact@oslandia.com"},
 ]
 description = "Python module for 3D tiles format"
 readme = "README.rst"

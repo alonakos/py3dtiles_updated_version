@@ -22,6 +22,18 @@ class Gltf(TileContent):
     def __init__(self, gltf: GLTF2 | None = None) -> None:
         super().__init__()
         self._gltf = GLTF2() if gltf is None else gltf
+        self.batch_length: int = 0
+
+    @property
+    def header(self) -> dict[str, Any]:
+        return cast(dict[str, Any], self._gltf.to_dict())
+
+    @property
+    def body(self) -> npt.NDArray[np.uint8] | None:
+        binary_blob = self._gltf.binary_blob()
+        if binary_blob is None:
+            return None
+        return np.frombuffer(binary_blob, dtype=np.uint8)
 
     @classmethod
     def from_bytes(cls, data: bytes) -> Self:
@@ -30,6 +42,82 @@ class Gltf(TileContent):
         """
         _gltf = GLTF2().load_from_bytes(data)
         return cls(_gltf)
+
+    @classmethod
+    def from_array(cls, array: npt.NDArray[np.uint8]) -> Self:
+        """
+        Legacy constructor compatible with the old GlTF.from_array(array) API.
+        """
+        return cls.from_bytes(array.tobytes())
+
+    @classmethod
+    def from_binary_arrays(
+        cls,
+        arrays: list[dict[str, Any]],
+        transform: npt.NDArray[np.float32] | None,
+        batched: bool = True,
+        uri: str | None = None,
+        texture_uri: str | None = None,
+    ) -> Self:
+        """
+        Legacy constructor compatible with the old GlTF.from_binary_arrays API.
+
+        `uri` is kept for call compatibility. The current implementation always
+        writes a binary GLB blob, so `uri` is not used.
+        """
+        del uri
+
+        if not arrays:
+            raise InvalidGltfError("'arrays' must contain at least one geometry.")
+
+        textured = "uv" in arrays[0]
+        meshes: list[gltf_utils.GltfMesh] = []
+
+        for i, geometry in enumerate(arrays):
+            if "position" not in geometry:
+                raise InvalidGltfError("Missing 'position' in geometry.")
+            if "normal" not in geometry:
+                raise InvalidGltfError("Missing 'normal' in geometry.")
+
+            positions = np.frombuffer(geometry["position"], dtype=np.float32).reshape(
+                (-1, 3)
+            )
+            normals = np.frombuffer(geometry["normal"], dtype=np.float32).reshape(
+                (-1, 3)
+            )
+            uvs = (
+                np.frombuffer(geometry["uv"], dtype=np.float32).reshape((-1, 2))
+                if textured and geometry.get("uv") is not None
+                else None
+            )
+
+            batchids = (
+                np.full(positions.shape[0], i, dtype=np.float32) if batched else None
+            )
+
+            meshes.append(
+                gltf_utils.GltfMesh(
+                    points=positions,
+                    normals=normals,
+                    uvs=uvs,
+                    batchids=batchids,
+                    batchids_component_type=(
+                        gltf_utils.get_component_type_from_dtype(batchids.dtype)
+                        if batchids is not None
+                        else None
+                    ),
+                    primitives=[
+                        gltf_utils.GltfPrimitive(
+                            texture_uri=texture_uri if textured else None
+                        )
+                    ],
+                    properties=geometry.get("properties"),
+                )
+            )
+
+        result = cls.from_meshes(meshes, transform=transform)
+        result.batch_length = len(arrays) if batched else 0
+        return result
 
     @classmethod
     def from_meshes(
@@ -246,3 +334,5 @@ class PointsGltf(Gltf):
             current_offset += buffer_view.byteLength
 
         gltf.set_binary_blob(merged_buffer)
+        
+GlTF = Gltf

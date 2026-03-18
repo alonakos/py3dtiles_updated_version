@@ -29,6 +29,11 @@ class TileContent(ABC):
         """
         Save the tile content to a file.
         """
+        if isinstance(path, str):
+            path = Path(path)
+
+        # create filepath if doesn't exist
+        path.parent.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     @abstractmethod

@@ -144,7 +144,8 @@ class GltfMesh:
         name: str | None = None,
         normals: npt.NDArray[np.float32] | None = None,
         primitives: list[GltfPrimitive] | None = None,
-        batchids: npt.NDArray[np.uint32] | None = None,
+        batchids: npt.NDArray[np.uint32 | np.float32] | None = None,
+        batchids_component_type: int | None = None,
         uvs: npt.NDArray[np.float32] | None = None,
         additional_attributes: list[GltfAttribute] | None = None,
         properties: dict[str, Any] | None = None,
@@ -171,7 +172,12 @@ class GltfMesh:
         )
         self.batchids: GltfAttribute | None = (
             GltfAttribute(
-                "_BATCHID", pygltflib.SCALAR, pygltflib.UNSIGNED_INT, batchids
+                "_BATCHID",
+                pygltflib.SCALAR,
+                batchids_component_type
+                if batchids_component_type is not None
+                else get_component_type_from_dtype(batchids.dtype),
+                batchids,
             )
             if batchids is not None
             else None

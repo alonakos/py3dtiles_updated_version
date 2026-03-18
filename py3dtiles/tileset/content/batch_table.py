@@ -45,10 +45,21 @@ PropertyLiteralType = Literal["SCALAR", "VEC2", "VEC3", "VEC4"]
 
 class BatchTableHeader:
     def __init__(self, data: BatchTableHeaderDataType | None = None) -> None:
-        if data is not None:
-            self.data = data
+        self.data = data if data is not None else {}
+
+    @property
+    def properties(self):
+        return self.data
+
+    @properties.setter
+    def properties(self, value):
+        self.data = value
+
+    def add_property_from_array(self, property_name, array):
+        if isinstance(array, np.ndarray):
+            self.data[property_name] = array.tolist()
         else:
-            self.data = {}
+            self.data[property_name] = array
 
     def to_array(self) -> npt.NDArray[np.uint8]:
         if not self.data:
@@ -62,28 +73,24 @@ class BatchTableHeader:
 
 class BatchTableBody:
     def __init__(self, data: list[npt.NDArray[ComponentNumpyType]] | None = None):
-        if data is not None:
-            self.data = data
-        else:
-            self.data = []
+        self.data = data if data is not None else []
 
     def to_array(self) -> npt.NDArray[np.uint8]:
         if not self.data:
             return np.empty((0,), dtype=np.uint8)
 
-        if self.nbytes % 8 != 0:
-            padding_str = " " * (8 - self.nbytes % 8)
-            padding = np.frombuffer(padding_str.encode("utf-8"), dtype=np.uint8)
-            self.data.append(padding)
+        chunks = [data.view(np.uint8) for data in self.data]
+        total_nbytes = sum(data.nbytes for data in self.data)
 
-        return np.concatenate(
-            [data.view(np.uint8) for data in self.data], dtype=np.uint8
-        )
+        if total_nbytes % 8 != 0:
+            padding_str = " " * (8 - total_nbytes % 8)
+            chunks.append(np.frombuffer(padding_str.encode("utf-8"), dtype=np.uint8))
+
+        return np.concatenate(chunks, dtype=np.uint8)
 
     @property
     def nbytes(self) -> int:
-        return sum([data.nbytes for data in self.data])
-
+        return sum(data.nbytes for data in self.data)
 
 class BatchTable:
     """
@@ -96,8 +103,21 @@ class BatchTable:
         self.header = BatchTableHeader()
         self.body = BatchTableBody()
 
-    def add_property_as_json(self, property_name: str, array: list[Any]) -> None:
-        self.header.data[property_name] = array
+    def add_property_as_json(self, property_name: str, array) -> None:
+        if isinstance(array, np.ndarray):
+            self.header.data[property_name] = array.tolist()
+        else:
+            self.header.data[property_name] = array
+
+    def get_length(self):
+        if len(list(self.header.properties.keys())) == 0:
+            return
+
+        if "id" in self.header.properties:
+            return len(self.header.properties["id"])
+        else:
+            first_key = list(self.header.properties.keys())[0]
+            return len(self.header.properties[first_key])
 
     def add_property_as_binary(
         self,
